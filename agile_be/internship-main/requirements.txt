@@ -1,0 +1,8 @@
+Django
+wagtail
+djangorestframework 
+djangorestframework-simplejwt
+django-cors-headers
+mysqlclient  
+reportlab>=3.6.12
+pytz==2025.2
