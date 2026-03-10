@@ -16,5 +16,7 @@ urlpatterns = [
    path('interview/create/', views.create_f2f, name='create-f2f'),
    path('interview/update/<int:pk>/', views.update_f2f, name='update-f2f'),
    path('interview/delete/<int:pk>/', views.delete_f2f, name='delete-f2f'),
+   path('post-interview-decisions/', views.post_interview_decisions_list, name='post-interview-decisions'),
+   path('interview/update-status/<int:pk>/', views.update_interview_status, name='update-interview-status'),
 ]
 

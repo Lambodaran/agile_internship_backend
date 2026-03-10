@@ -25,8 +25,7 @@ urlpatterns = [
     path('internships/', include('internships.urls')),
     path('candidates/', include('candidates.urls')),
     path('interviewer/', include('interviewer.urls')),
-
-    
+    path('messages/', include('messages.urls')),
 
 ]
 # Serve media files (resumes) during development

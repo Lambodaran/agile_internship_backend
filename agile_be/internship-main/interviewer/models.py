@@ -8,6 +8,9 @@ class FaceToFaceInterview(models.Model):
     date = models.DateField()
     time = models.TimeField(blank=True, null=True)
     zoom = models.URLField(max_length=500, blank=True, null=True)
+    # Post-interview decision fields: null = pending
+    attended = models.BooleanField(null=True, blank=True)
+    selected = models.BooleanField(null=True, blank=True)
 
     def __str__(self):
         return f"{self.name} - {self.internship_role} on {self.date}"

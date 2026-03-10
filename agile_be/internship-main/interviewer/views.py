@@ -179,6 +179,7 @@ class RejectApplicationView(APIView):
  
 
 from interviewer.models import FaceToFaceInterview
+from interviewer.serializers import PostInterviewDecisionSerializer
 # from candidates.serializers import FaceToFaceInterviewSerializer
 
 
@@ -270,3 +271,45 @@ def update_f2f(request, pk):
 
     except FaceToFaceInterview.DoesNotExist:
         return Response({'error': 'Interview record not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+
+# ─── Post-Interview Decisions (face-to-face only) ─────────────────────────
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def post_interview_decisions_list(request):
+    """
+    List candidates who have a scheduled face-to-face interview, for Post-Interview Decisions.
+    Returns only face-to-face scheduled candidates with attended/selected fields.
+    """
+    user = request.user
+    internships = Internship.objects.filter(created_by=user)
+    applications = InternshipApplication.objects.filter(internship__in=internships)
+    interviews = FaceToFaceInterview.objects.filter(application__in=applications).select_related('application').order_by('-date', '-time')
+    serializer = PostInterviewDecisionSerializer(interviews, many=True)
+    return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+@api_view(['PATCH'])
+@permission_classes([IsAuthenticated])
+def update_interview_status(request, pk):
+    """
+    Update attended and/or selected for a face-to-face interview (Post-Interview Decisions).
+    Body: { "attended_meeting": true|false|null, "is_selected": true|false|null }
+    """
+    try:
+        f2f = FaceToFaceInterview.objects.select_related('application', 'application__internship').get(pk=pk)
+    except FaceToFaceInterview.DoesNotExist:
+        return Response({'error': 'Interview not found.'}, status=status.HTTP_404_NOT_FOUND)
+    if f2f.application.internship.created_by_id != request.user.id:
+        return Response({'error': 'Not allowed to update this interview.'}, status=status.HTTP_403_FORBIDDEN)
+
+    attended = request.data.get('attended_meeting')
+    selected = request.data.get('is_selected')
+    if attended is not None:
+        f2f.attended = attended
+    if selected is not None:
+        f2f.selected = selected
+    f2f.save()
+    serializer = PostInterviewDecisionSerializer(f2f)
+    return Response(serializer.data, status=status.HTTP_200_OK)
