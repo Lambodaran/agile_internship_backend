@@ -180,6 +180,7 @@ class RejectApplicationView(APIView):
 
 from interviewer.models import FaceToFaceInterview
 from interviewer.serializers import PostInterviewDecisionSerializer
+from messages.models import Message
 # from candidates.serializers import FaceToFaceInterviewSerializer
 
 
@@ -311,5 +312,28 @@ def update_interview_status(request, pk):
     if selected is not None:
         f2f.selected = selected
     f2f.save()
+
+    # When both Attended and Selected are True, send one automated congrats message (once per candidate)
+    if f2f.attended and f2f.selected and not f2f.auto_congrats_sent:
+        app = f2f.application
+        score = app.test_score
+        if score is not None:
+            score_text = f" Your assessment score was {round(score)}%."
+        else:
+            score_text = ""
+        congrats_content = (
+            f"Congratulations, {f2f.name or 'you'}! "
+            f"You have been selected for the {f2f.internship_role or 'this role'} position.{score_text} "
+            "You can reply here if you have any questions."
+        )
+        Message.objects.create(
+            application=app,
+            sender_type='interviewer',
+            sender_user=request.user,
+            content=congrats_content,
+        )
+        f2f.auto_congrats_sent = True
+        f2f.save(update_fields=['auto_congrats_sent'])
+
     serializer = PostInterviewDecisionSerializer(f2f)
     return Response(serializer.data, status=status.HTTP_200_OK)

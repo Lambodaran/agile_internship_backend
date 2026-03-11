@@ -11,6 +11,8 @@ class FaceToFaceInterview(models.Model):
     # Post-interview decision fields: null = pending
     attended = models.BooleanField(null=True, blank=True)
     selected = models.BooleanField(null=True, blank=True)
+    # Send automated congrats message only once when both attended and selected become True
+    auto_congrats_sent = models.BooleanField(default=False)
 
     def __str__(self):
         return f"{self.name} - {self.internship_role} on {self.date}"
