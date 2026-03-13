@@ -6,3 +6,4 @@ django-cors-headers
 mysqlclient  
 reportlab>=3.6.12
 pytz==2025.2
+Pillow>=10.0.0

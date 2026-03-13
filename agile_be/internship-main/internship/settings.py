@@ -60,7 +60,7 @@ INSTALLED_APPS = [
     'corsheaders',
     'interviewer',
     'messages',
-
+    'profiles',
 ]
 
 MIDDLEWARE = [
