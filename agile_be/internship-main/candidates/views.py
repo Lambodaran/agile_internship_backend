@@ -262,3 +262,201 @@ def candidate_interview_calendar(request):
     return Response({
         'scheduled_interviews': interview_data,
     }, status=status.HTTP_200_OK)
+    
+
+from datetime import datetime
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def application_history(request):
+    applications = (
+        InternshipApplication.objects
+        .filter(user=request.user)
+        .select_related('internship')
+        .prefetch_related('assessment_results', 'interviews')
+        .order_by('-applied_at')
+    )
+
+    history_data = []
+
+    for app in applications:
+        timeline = []
+
+        if app.internship:
+            company = app.internship.company_name
+            role = app.internship.internship_role
+        else:
+            company = getattr(app, 'company_name', None) or "Unknown Company"
+            role = getattr(app, 'internship_role', None) or "Unknown Role"
+
+        applied_ts = app.applied_at.isoformat() if app.applied_at else None
+
+        # 1. Application Submitted
+        if app.applied_at:
+            timeline.append({
+                "id": f"applied-{app.id}",
+                "eventType": "applied",
+                "title": "Application Submitted",
+                "description": f"You applied for {role} at {company}.",
+                "timestamp": applied_ts,
+                "status": "completed",
+            })
+
+        # 2. Application Accepted
+        if app.status == 'accepted':
+            timeline.append({
+                "id": f"application-accepted-{app.id}",
+                "eventType": "application_accepted",
+                "title": "Application Accepted",
+                "description": "Your application was accepted. Please attend the scheduled quiz to move to the next stage.",
+                "timestamp": applied_ts,
+                "status": "completed",
+            })
+
+        assessment = app.assessment_results.order_by('completed_date').last()
+        quiz_timestamp = None
+        quiz_score = None
+
+        # 3. Quiz Completed
+        if assessment:
+            quiz_timestamp = assessment.completed_date.isoformat() if assessment.completed_date else applied_ts
+            quiz_score = round(assessment.score, 2) if assessment.score is not None else None
+
+            title = f"Quiz Completed ({quiz_score}%)" if quiz_score is not None else "Quiz Completed"
+
+            timeline.append({
+                "id": f"quiz-{app.id}",
+                "eventType": "quiz_completed",
+                "title": title,
+                "description": "Your assessment was submitted successfully.",
+                "timestamp": quiz_timestamp,
+                "status": "completed",
+            })
+
+        elif getattr(app, 'test_completed', False):
+            quiz_timestamp = applied_ts
+            quiz_score = round(app.test_score, 2) if app.test_score is not None else None
+
+            title = f"Quiz Completed ({quiz_score}%)" if quiz_score is not None else "Quiz Completed"
+
+            timeline.append({
+                "id": f"quiz-{app.id}",
+                "eventType": "quiz_completed",
+                "title": title,
+                "description": "Your assessment was submitted successfully.",
+                "timestamp": quiz_timestamp,
+                "status": "completed",
+            })
+
+        # 4. Shortlisted for Interview
+        if getattr(app, 'test_passed', False):
+            shortlist_timestamp = quiz_timestamp or applied_ts
+            timeline.append({
+                "id": f"shortlisted-{app.id}",
+                "eventType": "shortlisted",
+                "title": "Shortlisted for Interview",
+                "description": "You passed the quiz and were shortlisted for the interview stage.",
+                "timestamp": shortlist_timestamp,
+                "status": "completed",
+            })
+
+        interview = app.interviews.order_by('date', 'time').first()
+
+        if interview:
+            interview_dt = None
+            if interview.date:
+                if interview.time:
+                    interview_dt = datetime.combine(interview.date, interview.time)
+                else:
+                    interview_dt = datetime.combine(interview.date, datetime.min.time())
+
+            interview_ts = interview_dt.isoformat() if interview_dt else applied_ts
+
+            # 5. Interview Scheduled
+            timeline.append({
+                "id": f"interview-scheduled-{app.id}",
+                "eventType": "interview_scheduled",
+                "title": "Interview Scheduled",
+                "description": f"Your interview for {role} was scheduled.",
+                "timestamp": interview_ts,
+                "status": "completed",
+            })
+
+            # 6. Interview Completed
+            if interview.attended is True:
+                timeline.append({
+                    "id": f"interview-completed-{app.id}",
+                    "eventType": "interview_completed",
+                    "title": "Face-to-Face Interview Completed",
+                    "description": "Your interview attendance was confirmed.",
+                    "timestamp": interview_ts,
+                    "status": "completed",
+                })
+
+            # 7. Final selection
+            if interview.selected is True:
+                timeline.append({
+                    "id": f"selected-{app.id}",
+                    "eventType": "offer_extended",
+                    "title": "Selected for Internship",
+                    "description": "You were selected after the interview.",
+                    "timestamp": interview_ts,
+                    "status": "completed",
+                })
+            elif interview.selected is False:
+                timeline.append({
+                    "id": f"not-selected-{app.id}",
+                    "eventType": "rejected",
+                    "title": "Not Selected After Interview",
+                    "description": "You were not selected after the interview.",
+                    "timestamp": interview_ts,
+                    "status": "failed",
+                })
+
+        # Application-level rejection
+        if app.status == 'rejected' and not any(item["eventType"] == "rejected" for item in timeline):
+            timeline.append({
+                "id": f"rejected-{app.id}",
+                "eventType": "rejected",
+                "title": "Application Rejected",
+                "description": "Your application was not selected.",
+                "timestamp": applied_ts,
+                "status": "failed",
+            })
+
+        timeline.sort(key=lambda x: x["timestamp"] or "")
+
+        current_status = "Application Submitted"
+        final_outcome = None
+
+        if app.status == 'rejected':
+            current_status = "Rejected"
+            final_outcome = "rejected"
+        elif interview and interview.selected is True:
+            current_status = "Selected for Internship"
+            final_outcome = "accepted"
+        elif interview and interview.selected is False:
+            current_status = "Not Selected After Interview"
+            final_outcome = "rejected"
+        elif interview and interview.attended is True:
+            current_status = "Interview Completed"
+        elif interview:
+            current_status = "Interview Scheduled"
+        elif getattr(app, 'test_passed', False):
+            current_status = "Shortlisted for Interview"
+        elif getattr(app, 'test_completed', False):
+            current_status = "Quiz Completed"
+        elif app.status == 'accepted':
+            current_status = "Application Accepted"
+
+        history_data.append({
+            "id": str(app.id),
+            "company": company,
+            "role": role,
+            "appliedAt": applied_ts,
+            "currentStatus": current_status,
+            "finalOutcome": final_outcome,
+            "timeline": timeline,
+            "feedback": None,
+        })
+
+    return Response(history_data, status=200)

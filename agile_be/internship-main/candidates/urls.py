@@ -17,5 +17,6 @@ urlpatterns = [
     path('submit-test-results/', views.submit_test_results, name='submit_test_results'),
     path('test-results/', views.test_results, name='test_results'),
     path('candidate_interview_calendar/', views.candidate_interview_calendar, name='candidate_interview_calendar'),
+    path('application-history/', views.application_history, name='application_history')
 ]
 
