@@ -124,3 +124,26 @@ class AssessmentResult(models.Model):
     
     def __str__(self):
         return f"{self.candidate.username} - {self.internship_application.internship_role} - Score: {self.score}"
+
+
+class SavedInternship(models.Model):
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='saved_internships'
+    )
+    internship = models.ForeignKey(
+        Internship,
+        on_delete=models.CASCADE,
+        related_name='saved_by_candidates'
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = ('user', 'internship')
+        ordering = ['-created_at']
+
+    def __str__(self):
+        internship_role = self.internship.internship_role if self.internship else "Internship"
+        username = self.user.username if self.user else "User"
+        return f"{username} saved {internship_role}"

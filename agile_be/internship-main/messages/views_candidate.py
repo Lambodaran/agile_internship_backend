@@ -9,7 +9,6 @@ from candidates.models import InternshipApplication
 from interviewer.models import FaceToFaceInterview
 from .models import Message
 
-
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
 def candidate_conversations(request):
@@ -45,6 +44,12 @@ def candidate_conversations(request):
         if last_msg and (timezone.now() - last_msg.created_at).days >= 1:
             last_message_time = last_msg.created_at.strftime("%b %d")
 
+        unread_count = Message.objects.filter(
+            application=app,
+            sender_type="interviewer",
+            read=False
+        ).count()
+
         conversations.append(
             {
                 "id": f"conv-{app.id}",
@@ -55,8 +60,7 @@ def candidate_conversations(request):
                 "applicationId": str(app.id),
                 "lastMessage": last_message,
                 "lastMessageTime": last_message_time,
-                "unreadCount": 0,
-                "status": "hired",
+                "unreadCount": unread_count,
                 "messages": [],
             }
         )
@@ -69,22 +73,35 @@ def candidate_conversations(request):
 def candidate_conversation_messages(request, application_id):
     """Messages for a candidate's conversation. Requires attended+selected F2F and ownership."""
     user = request.user
+
     try:
         app = InternshipApplication.objects.get(pk=application_id, user=user)
     except InternshipApplication.DoesNotExist:
         return Response({"error": "Application not found."}, status=status.HTTP_404_NOT_FOUND)
 
     f2f = FaceToFaceInterview.objects.filter(
-        application=app, attended=True, selected=True
+        application=app,
+        attended=True,
+        selected=True
     ).first()
+
     if not f2f:
         return Response(
             {"error": "Conversation not available."},
             status=status.HTTP_403_FORBIDDEN,
         )
 
+    # Mark recruiter messages as read when candidate opens the chat
+    Message.objects.filter(
+        application=app,
+        sender_type="interviewer",
+        read=False
+    ).update(read=True)
+
     messages = Message.objects.filter(application=app).order_by("created_at")
+
     data = []
+
     for m in messages:
         if m.sender_type == "interviewer":
             sender = "recruiter"
@@ -92,15 +109,18 @@ def candidate_conversation_messages(request, application_id):
             sender = "candidate"
         else:
             sender = "system"
+
         attachment = None
         if m.file:
             url = request.build_absolute_uri(m.file.url)
             name = m.file_name or os.path.basename(m.file.name)
+
             attachment = {
                 "name": name,
                 "url": url,
                 "type": m.file_type or "",
             }
+
         data.append(
             {
                 "id": str(m.id),
@@ -111,7 +131,10 @@ def candidate_conversation_messages(request, application_id):
                 "attachment": attachment,
             }
         )
+
     return Response(data, status=status.HTTP_200_OK)
+
+
 
 
 @api_view(["POST"])

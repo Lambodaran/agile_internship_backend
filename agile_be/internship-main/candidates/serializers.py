@@ -173,3 +173,12 @@ class AssessmentResultSerializer(serializers.ModelSerializer):
             'passed',
             'completed_date',
         ]
+        
+
+from .models import SavedInternship
+class SavedInternshipSerializer(serializers.ModelSerializer):
+    internship = InternshipSerializer(read_only=True)
+
+    class Meta:
+        model = SavedInternship
+        fields = ['id', 'internship', 'created_at']

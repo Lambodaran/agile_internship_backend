@@ -460,3 +460,58 @@ def application_history(request):
         })
 
     return Response(history_data, status=200)
+
+from .models import SavedInternship
+from .serializers import SavedInternshipSerializer
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def list_saved_internships(request):
+    saved_items = (
+        SavedInternship.objects
+        .filter(user=request.user)
+        .select_related('internship')
+        .order_by('-created_at')
+    )
+    serializer = SavedInternshipSerializer(saved_items, many=True)
+    return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def toggle_saved_internship(request):
+    internship_id = request.data.get('internship_id')
+
+    if not internship_id:
+        return Response(
+            {'error': 'internship_id is required.'},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    internship = get_object_or_404(Internship, id=internship_id)
+
+    saved_item = SavedInternship.objects.filter(
+        user=request.user,
+        internship=internship
+    ).first()
+
+    if saved_item:
+        saved_item.delete()
+        return Response(
+            {
+                'saved': False,
+                'message': 'Internship removed from saved list.'
+            },
+            status=status.HTTP_200_OK
+        )
+
+    SavedInternship.objects.create(
+        user=request.user,
+        internship=internship
+    )
+    return Response(
+        {
+            'saved': True,
+            'message': 'Internship saved successfully.'
+        },
+        status=status.HTTP_201_CREATED
+    )
