@@ -43,13 +43,21 @@ class ProfileSerializer(serializers.ModelSerializer):
         return None
 
     def validate_username(self, value):
-        user = self.context.get('request').user
+        request = self.context.get('request')
+        if not request or not request.user:
+            return value
+        
+        user = request.user
         if User.objects.exclude(pk=user.pk).filter(username=value).exists():
             raise serializers.ValidationError("This username is already in use.")
         return value
 
     def validate_email(self, value):
-        user = self.context.get('request').user
+        request = self.context.get('request')
+        if not request or not request.user:
+            return value
+            
+        user = request.user
         if value and User.objects.exclude(pk=user.pk).filter(email=value).exists():
             raise serializers.ValidationError("This email is already in use.")
         return value
@@ -93,7 +101,12 @@ class CandidateProfileSerializer(serializers.ModelSerializer):
         return None
 
     def validate_email(self, value):
-        user = self.context.get('request').user
+        # Safely get request and user from context
+        request = self.context.get('request')
+        if not request or not hasattr(request, 'user') or not request.user:
+            return value
+            
+        user = request.user
         if value and User.objects.exclude(pk=user.pk).filter(email=value).exists():
             raise serializers.ValidationError("This email is already in use.")
         return value
@@ -108,11 +121,16 @@ class CandidateProfileSerializer(serializers.ModelSerializer):
             for attr, val in user_data.items():
                 setattr(instance.user, attr, val)
             instance.user.save()
+            
+        # Handle profile photo separately
         if 'profile_photo' in validated_data:
             instance.profile_photo = validated_data['profile_photo']
+            
+        # Update other fields
         for attr in ('full_name', 'professional_headline', 'university', 'location'):
             if attr in validated_data:
                 setattr(instance, attr, validated_data[attr])
+                
         instance.save()
         return instance
 
@@ -127,7 +145,15 @@ class ChangePasswordSerializer(serializers.Serializer):
             raise serializers.ValidationError({
                 "confirm_new_password": "New password and confirmation do not match."
             })
-        user = self.context['request'].user
+        
+        # Safely get user from context
+        request = self.context.get('request')
+        if not request or not hasattr(request, 'user') or not request.user:
+            raise serializers.ValidationError({
+                "current_password": "User not authenticated."
+            })
+            
+        user = request.user
         if not user.check_password(data['current_password']):
             raise serializers.ValidationError({
                 "current_password": "Current password is incorrect."
