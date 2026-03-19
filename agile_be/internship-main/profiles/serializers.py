@@ -80,7 +80,8 @@ class ProfileSerializer(serializers.ModelSerializer):
 
 
 class CandidateProfileSerializer(serializers.ModelSerializer):
-    """Read/update candidate profile: full_name, email, professional_headline, university, location, profile_photo."""
+    """Read/update candidate profile: username, full_name, email, professional_headline, university, location, profile_photo."""
+    username = serializers.CharField(source='user.username', max_length=150)
     email = serializers.EmailField(source='user.email', allow_blank=True)
     profile_photo = serializers.ImageField(required=False, allow_null=True)
     profile_photo_url = serializers.SerializerMethodField(read_only=True)
@@ -88,7 +89,7 @@ class CandidateProfileSerializer(serializers.ModelSerializer):
     class Meta:
         model = Profile
         fields = [
-            'id', 'full_name', 'email', 'professional_headline',
+            'id', 'username', 'full_name', 'email', 'professional_headline',
             'university', 'location', 'profile_photo', 'profile_photo_url',
         ]
 
@@ -100,12 +101,21 @@ class CandidateProfileSerializer(serializers.ModelSerializer):
             return obj.profile_photo.url
         return None
 
-    def validate_email(self, value):
-        # Safely get request and user from context
+    def validate_username(self, value):
         request = self.context.get('request')
         if not request or not hasattr(request, 'user') or not request.user:
             return value
-            
+
+        user = request.user
+        if User.objects.exclude(pk=user.pk).filter(username=value).exists():
+            raise serializers.ValidationError("This username is already in use.")
+        return value
+
+    def validate_email(self, value):
+        request = self.context.get('request')
+        if not request or not hasattr(request, 'user') or not request.user:
+            return value
+
         user = request.user
         if value and User.objects.exclude(pk=user.pk).filter(email=value).exists():
             raise serializers.ValidationError("This email is already in use.")
@@ -121,19 +131,16 @@ class CandidateProfileSerializer(serializers.ModelSerializer):
             for attr, val in user_data.items():
                 setattr(instance.user, attr, val)
             instance.user.save()
-            
-        # Handle profile photo separately
+
         if 'profile_photo' in validated_data:
             instance.profile_photo = validated_data['profile_photo']
-            
-        # Update other fields
+
         for attr in ('full_name', 'professional_headline', 'university', 'location'):
             if attr in validated_data:
                 setattr(instance, attr, validated_data[attr])
-                
+
         instance.save()
         return instance
-
 
 class ChangePasswordSerializer(serializers.Serializer):
     current_password = serializers.CharField(write_only=True, required=True)
