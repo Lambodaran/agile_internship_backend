@@ -8,7 +8,6 @@ import os
 from candidates.models import InternshipApplication
 from interviewer.models import FaceToFaceInterview
 from .models import Message
-
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
 def candidate_conversations(request):
@@ -32,17 +31,38 @@ def candidate_conversations(request):
         internship = getattr(app, "internship", None)
         company_name = app.company_name or (internship.company_name if internship else "")
         role = f2f.internship_role or app.internship_role or ""
-        recruiter = (
-            internship.created_by.get_full_name()
-            if internship and hasattr(internship.created_by, "get_full_name")
-            else (internship.created_by.username if internship else "")
-        )
+
+        recruiter = ""
+        if internship and internship.created_by:
+            full_name = (
+                internship.created_by.get_full_name().strip()
+                if hasattr(internship.created_by, "get_full_name")
+                else ""
+            )
+            recruiter = (
+                full_name
+                or internship.created_by.username
+                or internship.created_by.email
+                or ""
+            )
 
         last_msg = Message.objects.filter(application=app).order_by("-created_at").first()
-        last_message = last_msg.content if last_msg else "No messages yet"
-        last_message_time = last_msg.created_at.strftime("%I:%M %p") if last_msg else ""
-        if last_msg and (timezone.now() - last_msg.created_at).days >= 1:
-            last_message_time = last_msg.created_at.strftime("%b %d")
+
+        if last_msg:
+            content = (last_msg.content or "").strip()
+
+            if content:
+                last_message = content
+            elif last_msg.file:
+                last_message = f"Attachment sent: {last_msg.file_name or 'File'}"
+            else:
+                last_message = "No messages yet"
+        else:
+            last_message = "No messages yet"
+
+        last_message_time = (
+            timezone.localtime(last_msg.created_at).isoformat() if last_msg else ""
+        )
 
         unread_count = Message.objects.filter(
             application=app,
@@ -126,7 +146,7 @@ def candidate_conversation_messages(request, application_id):
                 "id": str(m.id),
                 "sender": sender,
                 "content": m.content,
-                "timestamp": m.created_at.strftime("%b %d %I:%M %p"),
+                "timestamp": timezone.localtime(m.created_at).isoformat(),
                 "read": m.read,
                 "attachment": attachment,
             }
@@ -188,7 +208,7 @@ def candidate_send_message(request, application_id):
             "id": str(msg.id),
             "sender": "candidate",
             "content": msg.content,
-            "timestamp": msg.created_at.strftime("%b %d %I:%M %p"),
+            "timestamp": timezone.localtime(msg.created_at).isoformat(),
             "read": msg.read,
             "attachment": attachment,
         },

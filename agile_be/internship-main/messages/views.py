@@ -9,8 +9,6 @@ from internships.models import Internship
 from candidates.models import InternshipApplication
 from interviewer.models import FaceToFaceInterview
 from .models import Message
-
-
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def interviewer_conversations(request):
@@ -22,38 +20,69 @@ def interviewer_conversations(request):
     internships = Internship.objects.filter(created_by=user)
     applications = InternshipApplication.objects.filter(internship__in=internships)
 
-    # Face-to-face interviews where attended=True and selected=True
     selected_interviews = FaceToFaceInterview.objects.filter(
         application__in=applications,
         attended=True,
         selected=True,
-    ).select_related('application').order_by('-date', '-time')
+    ).select_related('application', 'application__internship', 'application__user').order_by('-date', '-time')
 
     conversations = []
     for f2f in selected_interviews:
         app = f2f.application
+        internship = getattr(app, 'internship', None)
+        company_name = app.company_name or (internship.company_name if internship else "")
+
+        candidate_name = (
+            (f2f.name or "").strip()
+            or (app.candidate_name or "").strip()
+            or (
+                app.user.get_full_name().strip()
+                if getattr(app, "user", None) and hasattr(app.user, "get_full_name")
+                else ""
+            )
+            or (app.user.username if getattr(app, "user", None) else "")
+            or 'Candidate'
+        )
+
         last_msg = Message.objects.filter(application=app).order_by('-created_at').first()
-        last_message = last_msg.content if last_msg else 'No messages yet'
-        last_message_time = last_msg.created_at.strftime('%I:%M %p') if last_msg else ''
-        if last_msg and (timezone.now() - last_msg.created_at).days >= 1:
-            last_message_time = last_msg.created_at.strftime('%b %d')
+
+        if last_msg:
+            content = (last_msg.content or '').strip()
+
+            if content:
+                last_message = content
+            elif last_msg.file:
+                last_message = f"Attachment sent: {last_msg.file_name or 'File'}"
+            else:
+                last_message = 'No messages yet'
+        else:
+            last_message = 'No messages yet'
+
+        last_message_time = (
+            timezone.localtime(last_msg.created_at).isoformat() if last_msg else ''
+        )
+
+        unread_count = Message.objects.filter(
+            application=app,
+            sender_type='candidate',
+            read=False
+        ).count()
 
         conversations.append({
             'id': f'conv-{app.id}',
-            'candidateName': f2f.name or app.candidate_name or 'Candidate',
+            'candidateName': candidate_name,
             'candidateId': str(app.user_id or app.id),
             'role': f2f.internship_role or app.internship_role or '',
+            'companyName': company_name or 'Company',
             'lastMessage': last_message,
             'lastMessageTime': last_message_time,
-            'unreadCount': 0,
+            'unreadCount': unread_count,
             'starred': False,
-            'status': 'hired',
             'applicationId': str(app.id),
             'messages': [],
         })
 
     return Response(conversations, status=status.HTTP_200_OK)
-
 
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
@@ -71,16 +100,30 @@ def conversation_messages(request, application_id):
     if not app.internship or app.internship.created_by_id != user.id:
         return Response({'error': 'Not allowed.'}, status=status.HTTP_403_FORBIDDEN)
 
-    f2f = FaceToFaceInterview.objects.filter(application=app, attended=True, selected=True).first()
+    f2f = FaceToFaceInterview.objects.filter(
+        application=app,
+        attended=True,
+        selected=True
+    ).first()
     if not f2f:
-        return Response({'error': 'Candidate not in message list (not attended+selected).'}, status=status.HTTP_403_FORBIDDEN)
+        return Response(
+            {'error': 'Candidate not in message list (not attended+selected).'},
+            status=status.HTTP_403_FORBIDDEN
+        )
+
+    Message.objects.filter(
+        application=app,
+        sender_type='candidate',
+        read=False
+    ).update(read=True)
 
     messages = Message.objects.filter(application=app).order_by('created_at')
-    # Map to frontend shape: sender 'recruiter' | 'candidate', content, timestamp, read
+
     data = []
     for m in messages:
         sender = 'recruiter' if m.sender_type == 'interviewer' else 'candidate'
         attachment = None
+
         if m.file:
             url = request.build_absolute_uri(m.file.url)
             name = m.file_name or os.path.basename(m.file.name)
@@ -89,16 +132,17 @@ def conversation_messages(request, application_id):
                 'url': url,
                 'type': m.file_type or '',
             }
+
         data.append({
             'id': str(m.id),
             'sender': sender,
             'content': m.content,
-            'timestamp': m.created_at.strftime('%b %d %I:%M %p'),
+            'timestamp': timezone.localtime(m.created_at).isoformat(),
             'read': m.read,
             'attachment': attachment,
         })
-    return Response(data, status=status.HTTP_200_OK)
 
+    return Response(data, status=status.HTTP_200_OK)
 
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
@@ -150,7 +194,7 @@ def send_message(request, application_id):
         'id': str(msg.id),
         'sender': 'recruiter',
         'content': msg.content,
-        'timestamp': msg.created_at.strftime('%b %d %I:%M %p'),
+        'timestamp': timezone.localtime(msg.created_at).isoformat(),
         'read': msg.read,
         'attachment': attachment,
     }, status=status.HTTP_201_CREATED)
