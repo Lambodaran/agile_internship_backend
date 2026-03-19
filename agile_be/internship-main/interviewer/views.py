@@ -189,7 +189,10 @@ class RejectApplicationView(APIView):
 from interviewer.models import FaceToFaceInterview
 from interviewer.serializers import PostInterviewDecisionSerializer
 from messages.models import Message
-from notificationa.services import create_asap_meeting_notification
+from notificationa.services import (
+    create_asap_meeting_notification,
+    create_candidate_asap_meeting_notification,
+)
 # from candidates.serializers import FaceToFaceInterviewSerializer
 
 
@@ -226,6 +229,7 @@ def create_f2f(request):
             time=time 
         )
         create_asap_meeting_notification(interview)
+        create_candidate_asap_meeting_notification(interview)
 
         return Response({'message': 'Interview scheduled successfully.'}, status=status.HTTP_201_CREATED)
 
@@ -278,6 +282,8 @@ def update_f2f(request, pk):
         if time is not None:
             f2f.time = time if time else None
         f2f.save()
+        create_asap_meeting_notification(f2f)
+        create_candidate_asap_meeting_notification(f2f)
         return Response({'message': 'Interview updated successfully.'}, status=status.HTTP_200_OK)
 
     except FaceToFaceInterview.DoesNotExist:

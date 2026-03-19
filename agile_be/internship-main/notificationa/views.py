@@ -7,17 +7,23 @@ from candidates.models import InternshipApplication
 from interviewer.models import FaceToFaceInterview
 
 from .models import Notification
-from .services import create_asap_meeting_notification
+from .services import (
+    create_asap_meeting_notification,
+    create_candidate_asap_meeting_notification,
+    create_candidate_asap_test_schedule_notification,
+)
 
 
-def _get_action_path(notification):
+def _get_action_path(notification, user):
     if notification.notification_type == Notification.TYPE_NEW_MESSAGE:
-        return "/interviewer-messages"
+        return "/candidate-messages" if getattr(user, "role", "") == "candidate" else "/interviewer-messages"
     if notification.notification_type == Notification.TYPE_QUIZ_COMPLETED:
         return "/interviewer-f2f"
     if notification.notification_type == Notification.TYPE_MEETING_ASAP:
-        return "/interviewer-calendar"
-    return "/interviewer-dashboard"
+        return "/candidate-calendar" if getattr(user, "role", "") == "candidate" else "/interviewer-calendar"
+    if notification.notification_type == Notification.TYPE_TEST_SCHEDULE_ASAP:
+        return "/applied-internship"
+    return "/candidate-dashboard" if getattr(user, "role", "") == "candidate" else "/interviewer-dashboard"
 
 
 @api_view(["GET"])
@@ -41,7 +47,44 @@ def interviewer_notifications(request):
             "created_at": n.created_at.isoformat(),
             "application_id": n.application_id,
             "interview_id": n.interview_id,
-            "action_path": _get_action_path(n),
+            "action_path": _get_action_path(n, request.user),
+        }
+        for n in notifications
+    ]
+
+    unread_count = notifications.filter(is_read=False).count()
+    return Response(
+        {
+            "unread_count": unread_count,
+            "notifications": data,
+        },
+        status=status.HTTP_200_OK,
+    )
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def candidate_notifications(request):
+    applications = InternshipApplication.objects.filter(user=request.user).select_related("internship")
+    interviews = FaceToFaceInterview.objects.filter(application__in=applications)
+
+    for interview in interviews:
+        create_candidate_asap_meeting_notification(interview)
+
+    for application in applications:
+        create_candidate_asap_test_schedule_notification(application)
+
+    notifications = Notification.objects.filter(user=request.user).order_by("-created_at")
+    data = [
+        {
+            "id": n.id,
+            "type": n.notification_type,
+            "message": n.message,
+            "is_read": n.is_read,
+            "created_at": n.created_at.isoformat(),
+            "application_id": n.application_id,
+            "interview_id": n.interview_id,
+            "action_path": _get_action_path(n, request.user),
         }
         for n in notifications
     ]

@@ -6,11 +6,13 @@ class Notification(models.Model):
     TYPE_NEW_MESSAGE = "new_message"
     TYPE_QUIZ_COMPLETED = "quiz_completed"
     TYPE_MEETING_ASAP = "meeting_asap"
+    TYPE_TEST_SCHEDULE_ASAP = "test_schedule_asap"
 
     TYPE_CHOICES = [
         (TYPE_NEW_MESSAGE, "New Message"),
         (TYPE_QUIZ_COMPLETED, "Quiz Completed"),
         (TYPE_MEETING_ASAP, "Meeting ASAP"),
+        (TYPE_TEST_SCHEDULE_ASAP, "Test Schedule ASAP"),
     ]
 
     user = models.ForeignKey(
