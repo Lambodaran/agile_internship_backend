@@ -7,6 +7,14 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework import status
 from rest_framework import permissions
+from django.http import HttpResponse
+from django.utils import timezone
+from datetime import timedelta
+from io import BytesIO
+from reportlab.lib.pagesizes import letter
+from reportlab.lib import colors
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from internships.models import Internship
 from interviewer.models import FaceToFaceInterview
 from candidates.models import InternshipApplication
@@ -337,3 +345,152 @@ def update_interview_status(request, pk):
 
     serializer = PostInterviewDecisionSerializer(f2f)
     return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+def _get_date_range_start(date_range):
+    if date_range == '7d':
+        return timezone.now() - timedelta(days=7)
+    if date_range == '30d':
+        return timezone.now() - timedelta(days=30)
+    if date_range == '90d':
+        return timezone.now() - timedelta(days=90)
+    if date_range == 'ytd':
+        now = timezone.now()
+        return now.replace(month=1, day=1, hour=0, minute=0, second=0, microsecond=0)
+    return None
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def download_analytics_pdf(request):
+    """
+    Download interviewer analytics report as PDF.
+    Query params:
+      - date_range: 7d|30d|90d|ytd|all
+      - selected_role: internship role or all
+    """
+    user = request.user
+    date_range = request.GET.get('date_range', '30d')
+    selected_role = request.GET.get('selected_role', 'all')
+
+    internships = Internship.objects.filter(created_by=user)
+    if selected_role and selected_role != 'all':
+        internships = internships.filter(internship_role=selected_role)
+
+    applications = InternshipApplication.objects.filter(internship__in=internships).select_related('internship')
+    start_date = _get_date_range_start(date_range)
+    if start_date:
+        applications = applications.filter(applied_at__gte=start_date)
+
+    interviews = FaceToFaceInterview.objects.filter(application__in=applications).select_related('application')
+
+    total_jobs = internships.count()
+    total_applications = applications.count()
+    total_accepted = applications.filter(status='accepted').count()
+    total_rejected = applications.filter(status='rejected').count()
+    took_quiz = applications.filter(test_completed=True).count()
+    passed_quiz = applications.filter(test_passed=True).count()
+    interviewed = interviews.count()
+    hired = interviews.filter(selected=True).count()
+    conversion_rate = round((total_accepted / total_applications) * 100, 2) if total_applications else 0
+
+    role_summary = {}
+    for app in applications:
+        role = app.internship.internship_role if app.internship else 'Unknown'
+        if role not in role_summary:
+            role_summary[role] = {'total': 0, 'accepted': 0, 'rejected': 0}
+        role_summary[role]['total'] += 1
+        if app.status == 'accepted':
+            role_summary[role]['accepted'] += 1
+        if app.status == 'rejected':
+            role_summary[role]['rejected'] += 1
+
+    buffer = BytesIO()
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=letter,
+        rightMargin=50,
+        leftMargin=50,
+        topMargin=50,
+        bottomMargin=50,
+    )
+    styles = getSampleStyleSheet()
+    title_style = ParagraphStyle(
+        name='ReportTitle',
+        parent=styles['Heading1'],
+        fontSize=18,
+        alignment=1,
+        textColor=colors.HexColor('#0f172a'),
+    )
+
+    story = []
+    story.append(Paragraph('Interviewer Analytics Report', title_style))
+    story.append(Spacer(1, 8))
+    story.append(
+        Paragraph(
+            f"Generated on: {timezone.now().strftime('%Y-%m-%d %H:%M')} | Date Range: {date_range.upper()} | Role: {selected_role}",
+            styles['Normal'],
+        )
+    )
+    story.append(Spacer(1, 14))
+
+    summary_data = [
+        ['Metric', 'Value'],
+        ['Total Jobs Posted', str(total_jobs)],
+        ['Total Applications', str(total_applications)],
+        ['Total Accepted', str(total_accepted)],
+        ['Total Rejected', str(total_rejected)],
+        ['Quiz Attempted', str(took_quiz)],
+        ['Quiz Passed', str(passed_quiz)],
+        ['Interviews Scheduled', str(interviewed)],
+        ['Hired (Selected)', str(hired)],
+        ['Conversion Rate', f'{conversion_rate}%'],
+    ]
+    summary_table = Table(summary_data, colWidths=[260, 220])
+    summary_table.setStyle(
+        TableStyle(
+            [
+                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1d4ed8')),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('GRID', (0, 0), (-1, -1), 0.75, colors.HexColor('#cbd5e1')),
+                ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+                ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+                ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#f8fafc')]),
+            ]
+        )
+    )
+    story.append(summary_table)
+    story.append(Spacer(1, 14))
+
+    story.append(Paragraph('Role-wise Applications', styles['Heading3']))
+    role_table_data = [['Role', 'Total', 'Accepted', 'Rejected']]
+    for role, values in role_summary.items():
+        role_table_data.append(
+            [role, str(values['total']), str(values['accepted']), str(values['rejected'])]
+        )
+
+    if len(role_table_data) == 1:
+        role_table_data.append(['No data', '0', '0', '0'])
+
+    role_table = Table(role_table_data, colWidths=[220, 85, 85, 90])
+    role_table.setStyle(
+        TableStyle(
+            [
+                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#0f766e')),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('GRID', (0, 0), (-1, -1), 0.75, colors.HexColor('#cbd5e1')),
+                ('ALIGN', (1, 1), (-1, -1), 'CENTER'),
+                ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#f8fafc')]),
+            ]
+        )
+    )
+    story.append(role_table)
+
+    doc.build(story)
+    buffer.seek(0)
+
+    response = HttpResponse(buffer, content_type='application/pdf')
+    response['Content-Disposition'] = 'attachment; filename=interviewer_analytics_report.pdf'
+    return response

@@ -18,5 +18,6 @@ urlpatterns = [
    path('interview/delete/<int:pk>/', views.delete_f2f, name='delete-f2f'),
    path('post-interview-decisions/', views.post_interview_decisions_list, name='post-interview-decisions'),
    path('interview/update-status/<int:pk>/', views.update_interview_status, name='update-interview-status'),
+   path('analytics/download-pdf/', views.download_analytics_pdf, name='download-analytics-pdf'),
 ]
 
