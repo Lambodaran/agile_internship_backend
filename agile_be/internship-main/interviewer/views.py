@@ -189,6 +189,7 @@ class RejectApplicationView(APIView):
 from interviewer.models import FaceToFaceInterview
 from interviewer.serializers import PostInterviewDecisionSerializer
 from messages.models import Message
+from notificationa.services import create_asap_meeting_notification
 # from candidates.serializers import FaceToFaceInterviewSerializer
 
 
@@ -216,7 +217,7 @@ def create_f2f(request):
             return Response({'error': 'Please enter a valid Zoom URL.'}, status=status.HTTP_400_BAD_REQUEST)
         
         # Create interview
-        FaceToFaceInterview.objects.create(
+        interview = FaceToFaceInterview.objects.create(
             application=application,
             name=application.candidate_name,
             internship_role=application.internship_role,
@@ -224,6 +225,7 @@ def create_f2f(request):
             date=date,
             time=time 
         )
+        create_asap_meeting_notification(interview)
 
         return Response({'message': 'Interview scheduled successfully.'}, status=status.HTTP_201_CREATED)
 

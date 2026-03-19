@@ -97,6 +97,7 @@ from .models import InternshipApplication
 from .serializers import CandidateApplicationSerializer
 from Interview_Questions.models import Question, Quiz, Option
 from Interview_Questions.serializers import QuestionSerializer
+from notificationa.services import create_quiz_completed_notification
 
 
 @api_view(['GET'])  
@@ -151,6 +152,7 @@ def submit_test_results(request):
         application.test_passed = passed
         application.test_completed = True
         application.save()
+        create_quiz_completed_notification(application)
 
         # Create AssessmentResult entry
         AssessmentResult.objects.create(

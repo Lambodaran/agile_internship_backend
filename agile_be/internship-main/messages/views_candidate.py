@@ -8,6 +8,7 @@ import os
 from candidates.models import InternshipApplication
 from interviewer.models import FaceToFaceInterview
 from .models import Message
+from notificationa.services import create_new_message_notification
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
 def candidate_conversations(request):
@@ -194,6 +195,7 @@ def candidate_send_message(request, application_id):
         content=content,
         **file_kwargs,
     )
+    create_new_message_notification(app, candidate_name=(app.candidate_name or user.username))
     attachment = None
     if msg.file:
         url = request.build_absolute_uri(msg.file.url)
