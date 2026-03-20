@@ -97,7 +97,7 @@ from .models import InternshipApplication
 from .serializers import CandidateApplicationSerializer
 from Interview_Questions.models import Question, Quiz, Option
 from Interview_Questions.serializers import QuestionSerializer
-from notificationa.services import create_quiz_completed_notification
+from notifications.services import create_quiz_completed_notification
 
 
 @api_view(['GET'])  
@@ -516,4 +516,187 @@ def toggle_saved_internship(request):
             'message': 'Internship saved successfully.'
         },
         status=status.HTTP_201_CREATED
+    )
+    
+
+from collections import Counter, defaultdict
+from .models import InternshipApplication
+from .serializers import SkillLeaderboardEntrySerializer
+
+
+def normalize_field_label(value: str) -> str:
+    if not value:
+        return ""
+
+    mapping = {
+        "accounts": "Accounts",
+        "administration": "Administration",
+        "chemical": "Chemical",
+        "technology": "Technology",
+        "finance": "Finance",
+        "banking": "Banking",
+        "healthcare": "Healthcare",
+        "human_resource": "Human Resource",
+        "education": "Education",
+        "engineering": "Engineering",
+        "retail": "Retail",
+        "marketing": "Marketing",
+        "hospitality": "Hospitality",
+        "consulting": "Consulting",
+        "manufacturing": "Manufacturing",
+        "media": "Media",
+        "transportation": "Transportation",
+        "telecommunications": "Telecommunications",
+        "nonprofit": "Nonprofit",
+        "activate_windows": "Activate Windows",
+    }
+    return mapping.get(value, value.replace("_", " ").title())
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def skill_leaderboard(request):
+    applications = (
+        InternshipApplication.objects.filter(
+            test_completed=True,
+            test_score__isnull=False,
+            user__isnull=False,
+        )
+        .select_related("user", "internship")
+        .order_by("-applied_at")
+    )
+
+    user_stats = defaultdict(
+        lambda: {
+            "user_id": None,
+            "name": "",
+            "username": None,
+            "scores": [],
+            "fields": [],
+        }
+    )
+
+    for app in applications:
+        user = app.user
+        internship = app.internship
+
+        internship_field = ""
+        if internship and getattr(internship, "internship_field", None):
+            internship_field = internship.internship_field
+        elif getattr(app, "internship_field", None):
+            internship_field = app.internship_field or ""
+
+        field_label = normalize_field_label(internship_field)
+
+        display_name = (
+            (app.candidate_name or "").strip()
+            or (user.get_full_name().strip() if hasattr(user, "get_full_name") else "")
+            or getattr(user, "username", "")
+            or "Candidate"
+        )
+
+        bucket = user_stats[user.id]
+        bucket["user_id"] = user.id
+        bucket["name"] = display_name
+        bucket["username"] = getattr(user, "username", None)
+        bucket["scores"].append(int(round(float(app.test_score or 0))))
+        if field_label:
+            bucket["fields"].append(field_label)
+
+    leaderboard_rows = []
+
+    for _, data in user_stats.items():
+        scores = data["scores"]
+        if not scores:
+            continue
+
+        avg_score = round(sum(scores) / len(scores))
+
+        field_counter = Counter([f for f in data["fields"] if f])
+        primary_field = field_counter.most_common(1)[0][0] if field_counter else ""
+
+        leaderboard_rows.append(
+            {
+                "user_id": data["user_id"],
+                "name": data["name"],
+                "username": data["username"],
+                "average_score": avg_score,
+                "tests_completed": len(scores),
+                "primary_field": primary_field,
+            }
+        )
+
+    leaderboard_rows.sort(
+        key=lambda x: (-x["average_score"], -x["tests_completed"], x["name"].lower())
+    )
+
+    total_participants = len(leaderboard_rows)
+
+    ranked_rows = []
+    for index, row in enumerate(leaderboard_rows, start=1):
+        ranked_rows.append(
+            {
+                **row,
+                "rank": index,
+            }
+        )
+
+    current_user_payload = None
+    for row in ranked_rows:
+        if row["user_id"] == request.user.id:
+            current_user_payload = {
+                "user_id": row["user_id"],
+                "name": row["name"],
+                "username": row["username"],
+                "rank": row["rank"],
+                "average_score": row["average_score"],
+                "tests_completed": row["tests_completed"],
+            }
+            break
+
+    if current_user_payload is None:
+        fallback_name = (
+            request.user.get_full_name().strip()
+            if hasattr(request.user, "get_full_name")
+            else ""
+        ) or getattr(request.user, "username", "Candidate")
+
+        current_user_payload = {
+            "user_id": request.user.id,
+            "name": fallback_name,
+            "username": getattr(request.user, "username", None),
+            "rank": None,
+            "average_score": 0,
+            "tests_completed": 0,
+        }
+
+    top_score = ranked_rows[0]["average_score"] if ranked_rows else 0
+    average_score = (
+        round(sum(item["average_score"] for item in ranked_rows) / total_participants)
+        if total_participants > 0
+        else 0
+    )
+
+    field_values = ["All"]
+    existing_fields = sorted(
+        {item["primary_field"] for item in ranked_rows if item["primary_field"]}
+    )
+    field_values.extend(existing_fields)
+
+    serialized_rows = SkillLeaderboardEntrySerializer(ranked_rows, many=True).data
+
+    return Response(
+        {
+            "summary": {
+                "total_participants": total_participants,
+                "top_score": top_score,
+                "average_score": average_score,
+            },
+            "current_user": current_user_payload,
+            "filters": {
+                "fields": field_values,
+            },
+            "leaderboard": serialized_rows,
+        },
+        status=status.HTTP_200_OK,
     )

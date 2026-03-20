@@ -9,7 +9,7 @@ from internships.models import Internship
 from candidates.models import InternshipApplication
 from interviewer.models import FaceToFaceInterview
 from .models import Message
-from notificationa.services import create_candidate_new_message_notification
+from notifications.services import create_candidate_new_message_notification
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def interviewer_conversations(request):

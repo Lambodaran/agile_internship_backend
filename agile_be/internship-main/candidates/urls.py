@@ -19,6 +19,9 @@ urlpatterns = [
     path('candidate_interview_calendar/', views.candidate_interview_calendar, name='candidate_interview_calendar'),
     path('application-history/', views.application_history, name='application_history'),
     path('saved-internships/', views.list_saved_internships, name='list_saved_internships'),
-path('saved-internships/toggle/', views.toggle_saved_internship, name='toggle_saved_internship'),
+    path('saved-internships/toggle/', views.toggle_saved_internship, name='toggle_saved_internship'),
+    path('skill-leaderboard/', views.skill_leaderboard, name='skill_leaderboard'),
+
+
 ]
 

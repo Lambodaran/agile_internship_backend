@@ -27,7 +27,7 @@ urlpatterns = [
     path('interviewer/', include('interviewer.urls')),
     path('messages/', include('messages.urls')),
     path('profiles/', include('profiles.urls')),
-    path('notifications/', include('notificationa.urls')),
+    path('notifications/', include('notifications.urls')),
 ]
 # Serve media files (resumes) during development
 if settings.DEBUG:

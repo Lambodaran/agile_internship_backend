@@ -189,7 +189,7 @@ class RejectApplicationView(APIView):
 from interviewer.models import FaceToFaceInterview
 from interviewer.serializers import PostInterviewDecisionSerializer
 from messages.models import Message
-from notificationa.services import (
+from notifications.services import (
     create_asap_meeting_notification,
     create_candidate_asap_meeting_notification,
 )
@@ -502,3 +502,320 @@ def download_analytics_pdf(request):
     response = HttpResponse(buffer, content_type='application/pdf')
     response['Content-Disposition'] = 'attachment; filename=interviewer_analytics_report.pdf'
     return response
+
+
+from collections import defaultdict
+from datetime import timedelta
+from django.utils import timezone
+from internships.models import Internship
+from candidates.models import InternshipApplication
+from interviewer.models import FaceToFaceInterview
+
+
+def _get_date_range_start(date_range):
+    if date_range == '7d':
+        return timezone.now() - timedelta(days=7)
+    if date_range == '30d':
+        return timezone.now() - timedelta(days=30)
+    if date_range == '90d':
+        return timezone.now() - timedelta(days=90)
+    if date_range == 'ytd':
+        now = timezone.now()
+        return now.replace(month=1, day=1, hour=0, minute=0, second=0, microsecond=0)
+    return None
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def interviewer_analytics_summary(request):
+    user = request.user
+    date_range = request.GET.get('date_range', '30d')
+    selected_role = request.GET.get('selected_role', 'all')
+
+    internships = Internship.objects.filter(created_by=user).order_by('-created_at')
+    available_roles = list(
+        internships.values_list('internship_role', flat=True).distinct()
+    )
+
+    if selected_role != 'all':
+        internships = internships.filter(internship_role=selected_role)
+
+    applications = InternshipApplication.objects.filter(
+        internship__in=internships
+    ).select_related('internship')
+
+    start_date = _get_date_range_start(date_range)
+    if start_date:
+        applications = applications.filter(applied_at__gte=start_date)
+
+    interviews = FaceToFaceInterview.objects.filter(
+        application__in=applications
+    ).select_related('application', 'application__internship')
+
+    total_jobs_posted = internships.count()
+    total_applications = applications.count()
+    total_pending = applications.filter(status='pending').count()
+    total_accepted = applications.filter(status='accepted').count()
+    total_rejected = applications.filter(status='rejected').count()
+
+    test_completed = applications.filter(test_completed=True).count()
+    test_passed = applications.filter(test_passed=True).count()
+
+    scheduled_interviews = interviews.count()
+    attended_interviews = interviews.filter(attended=True).count()
+    absent_interviews = interviews.filter(attended=False).count()
+    selected_candidates = interviews.filter(selected=True).count()
+    rejected_after_interview = interviews.filter(selected=False).count()
+    pending_interview_decisions = interviews.filter(selected__isnull=True).count()
+
+    role_breakdown_map = defaultdict(lambda: {
+        "applications": 0,
+        "completed_quiz": 0,
+        "accepted": 0,
+        "rejected": 0,
+        "passed_quiz": 0,
+        "selected": 0,
+    })
+
+    score_map = defaultdict(lambda: {"total": 0, "count": 0})
+
+    for app in applications:
+        role = app.internship.internship_role if app.internship else "Unknown"
+        role_breakdown_map[role]["applications"] += 1
+
+        if app.test_completed:
+            role_breakdown_map[role]["completed_quiz"] += 1
+
+        if app.status == "accepted":
+            role_breakdown_map[role]["accepted"] += 1
+        elif app.status == "rejected":
+            role_breakdown_map[role]["rejected"] += 1
+
+        if app.test_passed:
+            role_breakdown_map[role]["passed_quiz"] += 1
+
+        if app.test_score is not None:
+            score_map[role]["total"] += float(app.test_score)
+            score_map[role]["count"] += 1
+
+    for interview in interviews:
+        role = interview.internship_role or (
+            interview.application.internship.internship_role
+            if interview.application and interview.application.internship
+            else "Unknown"
+        )
+        if interview.selected is True:
+            role_breakdown_map[role]["selected"] += 1
+
+    role_breakdown = []
+    for role, values in role_breakdown_map.items():
+        role_breakdown.append({
+            "role": role,
+            **values,
+        })
+
+    role_breakdown.sort(key=lambda x: x["applications"], reverse=True)
+
+    avg_scores_by_role = []
+    for role, values in score_map.items():
+        avg_scores_by_role.append({
+            "role": role,
+            "average_score": round(values["total"] / values["count"], 2) if values["count"] else 0,
+        })
+
+    avg_scores_by_role.sort(key=lambda x: x["average_score"], reverse=True)
+
+    return Response({
+        "filters": {
+            "date_range": date_range,
+            "selected_role": selected_role,
+            "available_roles": available_roles,
+        },
+        "overview": {
+            "total_jobs_posted": total_jobs_posted,
+            "total_applications": total_applications,
+            "total_pending": total_pending,
+            "total_accepted": total_accepted,
+            "total_rejected": total_rejected,
+            "test_completed": test_completed,
+            "test_passed": test_passed,
+            "scheduled_interviews": scheduled_interviews,
+            "attended_interviews": attended_interviews,
+            "absent_interviews": absent_interviews,
+            "selected_candidates": selected_candidates,
+            "rejected_after_interview": rejected_after_interview,
+            "pending_interview_decisions": pending_interview_decisions,
+        },
+        "charts": {
+            "application_status": [
+                {"name": "Pending", "value": total_pending},
+                {"name": "Accepted", "value": total_accepted},
+                {"name": "Rejected", "value": total_rejected},
+            ],
+            "assessment_pipeline": [
+                {"name": "Applications", "value": total_applications},
+                {"name": "Quiz Completed", "value": test_completed},
+                {"name": "Quiz Passed", "value": test_passed},
+            ],
+            "interview_outcomes": [
+                {"name": "Scheduled", "value": scheduled_interviews},
+                {"name": "Attended", "value": attended_interviews},
+                {"name": "Absent", "value": absent_interviews},
+                {"name": "Selected", "value": selected_candidates},
+                {"name": "Not Selected", "value": rejected_after_interview},
+                {"name": "Pending", "value": pending_interview_decisions},
+            ],
+            "role_breakdown": role_breakdown,
+            "avg_scores_by_role": avg_scores_by_role,
+        }
+    })
+    
+    
+
+from internships.models import Internship
+from candidates.models import InternshipApplication
+from interviewer.models import FaceToFaceInterview
+from messages.models import Message
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def interviewer_talent_pool(request):
+    user = request.user
+    search = request.GET.get('search', '').strip().lower()
+    selected_role = request.GET.get('role', 'all')
+    selected_stage = request.GET.get('stage', 'all')
+
+    internships = Internship.objects.filter(created_by=user)
+
+    if selected_role != 'all':
+        internships = internships.filter(internship_role=selected_role)
+
+    applications = (
+        InternshipApplication.objects
+        .filter(internship__in=internships)
+        .select_related('internship', 'user')
+        .prefetch_related('interviews')
+        .order_by('-applied_at')
+    )
+
+    candidates = []
+
+    for app in applications:
+        interview = app.interviews.order_by('-date', '-time').first()
+
+        stage = 'applied'
+        stage_label = 'Applied'
+
+        if app.status == 'rejected':
+            stage = 'rejected'
+            stage_label = 'Rejected'
+        elif interview and interview.selected is True:
+            stage = 'selected'
+            stage_label = 'Selected'
+        elif interview and interview.attended is True:
+            stage = 'interviewed'
+            stage_label = 'Interview Attended'
+        elif interview:
+            stage = 'interview_scheduled'
+            stage_label = 'Interview Scheduled'
+        elif app.test_passed:
+            stage = 'quiz_passed'
+            stage_label = 'Quiz Passed'
+        elif app.test_completed:
+            stage = 'quiz_completed'
+            stage_label = 'Quiz Completed'
+        elif app.status == 'accepted':
+            stage = 'accepted'
+            stage_label = 'Application Accepted'
+
+        company_name = (
+            app.company_name or
+            (app.internship.company_name if app.internship else '')
+        )
+
+        can_message = bool(interview and interview.attended is True and interview.selected is True)
+
+        unread_count = 0
+        if can_message:
+            unread_count = Message.objects.filter(
+                application=app,
+                sender_type='candidate',
+                read=False
+            ).count()
+
+        candidate = {
+            "id": app.id,
+            "candidate_name": app.candidate_name or "Candidate",
+            "candidate_email": app.candidate_email or "",
+            "candidate_phone": app.candidate_phone or "",
+            "role": app.internship_role or (app.internship.internship_role if app.internship else ""),
+            "company_name": company_name,
+            "applied_at": app.applied_at.isoformat() if app.applied_at else None,
+            "resume": app.resume.url if app.resume else None,
+            "status": app.status,
+            "test_score": round(app.test_score, 2) if app.test_score is not None else None,
+            "test_completed": bool(app.test_completed),
+            "test_passed": bool(app.test_passed),
+            "stage": stage,
+            "stage_label": stage_label,
+            "interview_id": interview.id if interview else None,
+            "interview_date": interview.date.isoformat() if interview and interview.date else None,
+            "interview_time": interview.time.strftime('%H:%M') if interview and interview.time else None,
+            "attended_meeting": interview.attended if interview else None,
+            "is_selected": interview.selected if interview else None,
+            "can_message": can_message,
+            "unread_messages": unread_count,
+        }
+
+        searchable = " ".join([
+            candidate["candidate_name"] or "",
+            candidate["candidate_email"] or "",
+            candidate["role"] or "",
+            candidate["stage_label"] or "",
+            candidate["company_name"] or "",
+        ]).lower()
+
+        if search and search not in searchable:
+            continue
+
+        if selected_stage != 'all' and candidate["stage"] != selected_stage:
+            continue
+
+        candidates.append(candidate)
+
+    summary = {
+        "total_candidates": len(candidates),
+        "quiz_passed": sum(1 for c in candidates if c["test_passed"]),
+        "interviews_scheduled": sum(1 for c in candidates if c["interview_id"]),
+        "selected_candidates": sum(1 for c in candidates if c["is_selected"] is True),
+        "average_score": round(
+            sum(c["test_score"] for c in candidates if c["test_score"] is not None) /
+            max(1, len([c for c in candidates if c["test_score"] is not None]))
+        ) if any(c["test_score"] is not None for c in candidates) else 0,
+    }
+
+    available_roles = list(
+        Internship.objects.filter(created_by=user)
+        .values_list('internship_role', flat=True)
+        .distinct()
+    )
+
+    return Response({
+        "filters": {
+            "roles": available_roles,
+            "stages": [
+                {"value": "all", "label": "All Stages"},
+                {"value": "applied", "label": "Applied"},
+                {"value": "accepted", "label": "Application Accepted"},
+                {"value": "quiz_completed", "label": "Quiz Completed"},
+                {"value": "quiz_passed", "label": "Quiz Passed"},
+                {"value": "interview_scheduled", "label": "Interview Scheduled"},
+                {"value": "interviewed", "label": "Interview Attended"},
+                {"value": "selected", "label": "Selected"},
+                {"value": "rejected", "label": "Rejected"},
+            ]
+        },
+        "summary": summary,
+        "results": candidates,
+    })
+    

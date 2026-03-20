@@ -182,3 +182,12 @@ class SavedInternshipSerializer(serializers.ModelSerializer):
     class Meta:
         model = SavedInternship
         fields = ['id', 'internship', 'created_at']
+        
+class SkillLeaderboardEntrySerializer(serializers.Serializer):
+    user_id = serializers.IntegerField()
+    name = serializers.CharField()
+    username = serializers.CharField(allow_null=True)
+    rank = serializers.IntegerField()
+    average_score = serializers.IntegerField()
+    tests_completed = serializers.IntegerField()
+    primary_field = serializers.CharField(allow_blank=True)
