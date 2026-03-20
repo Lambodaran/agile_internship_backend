@@ -185,77 +185,104 @@ class RejectApplicationView(APIView):
         
         
  
+from datetime import datetime
 
+from django.core.exceptions import ValidationError
+from django.core.validators import URLValidator
+from candidates.models import InternshipApplication
 from interviewer.models import FaceToFaceInterview
-from interviewer.serializers import PostInterviewDecisionSerializer
-from messages.models import Message
 from notifications.services import (
     create_asap_meeting_notification,
     create_candidate_asap_meeting_notification,
 )
-# from candidates.serializers import FaceToFaceInterviewSerializer
 
 
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
 def create_f2f(request):
-
     app_id = request.data.get("application_id")
     zoom = request.data.get("zoom")
-    date = request.data.get("date")
-    time = request.data.get("time")
+    date_value = request.data.get("date")
+    time_value = request.data.get("time")
+
+    if not app_id:
+        return Response(
+            {'error': 'Application ID is required.'},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    if not zoom:
+        return Response(
+            {'error': 'Zoom URL is required.'},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    if not date_value:
+        return Response(
+            {'error': 'Interview date is required.'},
+            status=status.HTTP_400_BAD_REQUEST
+        )
 
     try:
         application = InternshipApplication.objects.get(id=app_id, status='accepted')
 
-        # Prevent duplicate interview
         if FaceToFaceInterview.objects.filter(application=application).exists():
-            return Response({'error': 'Face to face interview already scheduled for this candidate.'}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {'error': 'Face to face interview already scheduled for this candidate.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
 
-        # Validate Zoom URL
-        validate = URLValidator()
+        validator = URLValidator()
         try:
-            validate(zoom)
+            validator(zoom)
         except ValidationError:
-            return Response({'error': 'Please enter a valid Zoom URL.'}, status=status.HTTP_400_BAD_REQUEST)
-        
-        # Create interview
+            return Response(
+                {'error': 'Please enter a valid Zoom URL.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+            parsed_date = datetime.strptime(date_value, "%Y-%m-%d").date()
+        except (ValueError, TypeError):
+            return Response(
+                {'error': 'Invalid date format. Use YYYY-MM-DD.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        parsed_time = None
+        if time_value:
+            try:
+                parsed_time = datetime.strptime(time_value, "%H:%M").time()
+            except (ValueError, TypeError):
+                return Response(
+                    {'error': 'Invalid time format. Use HH:MM.'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
         interview = FaceToFaceInterview.objects.create(
             application=application,
             name=application.candidate_name,
             internship_role=application.internship_role,
             zoom=zoom,
-            date=date,
-            time=time 
+            date=parsed_date,
+            time=parsed_time,
         )
+
+        interview.refresh_from_db()
         create_asap_meeting_notification(interview)
         create_candidate_asap_meeting_notification(interview)
 
-        return Response({'message': 'Interview scheduled successfully.'}, status=status.HTTP_201_CREATED)
+        return Response(
+            {'message': 'Interview scheduled successfully.'},
+            status=status.HTTP_201_CREATED
+        )
 
     except InternshipApplication.DoesNotExist:
-        return Response({'error': 'Application not found or not accepted.'}, status=status.HTTP_404_NOT_FOUND)
+        return Response(
+            {'error': 'Application not found or not accepted.'},
+            status=status.HTTP_404_NOT_FOUND
+        )
 
-
-
-
-
-
-
-@api_view(['DELETE'])
-@permission_classes([IsAuthenticated])
-def delete_f2f(request, pk):
-    try:
-        f2f = FaceToFaceInterview.objects.get(pk=pk)
-        f2f.delete()
-        return Response({'message': 'Interview deleted successfully.'}, status=status.HTTP_204_NO_CONTENT)
-
-    except FaceToFaceInterview.DoesNotExist:
-        return Response({'error': 'Interview record not found.'}, status=status.HTTP_404_NOT_FOUND)
-
-
-from django.core.validators import URLValidator
-from django.core.exceptions import ValidationError
 
 @api_view(['PUT'])
 @permission_classes([IsAuthenticated])
@@ -264,34 +291,75 @@ def update_f2f(request, pk):
         f2f = FaceToFaceInterview.objects.get(pk=pk)
 
         zoom = request.data.get("zoom")
-        date = request.data.get("date")
-        time = request.data.get("time")
+        date_value = request.data.get("date")
+        time_value = request.data.get("time")
 
-        # Validate and update Zoom URL
         if zoom is not None:
             validator = URLValidator()
             try:
                 validator(zoom)
                 f2f.zoom = zoom
             except ValidationError:
-                return Response({'error': 'Invalid Zoom URL. It must start with http:// or https://'}, status=status.HTTP_400_BAD_REQUEST)
+                return Response(
+                    {'error': 'Invalid Zoom URL. It must start with http:// or https://'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
 
-        # Update date directly (assuming frontend calendar ensures valid format)
-        if date is not None:
-            f2f.date = date
-        if time is not None:
-            f2f.time = time if time else None
+        if date_value is not None:
+            try:
+                f2f.date = datetime.strptime(date_value, "%Y-%m-%d").date()
+            except (ValueError, TypeError):
+                return Response(
+                    {'error': 'Invalid date format. Use YYYY-MM-DD.'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+        if time_value is not None:
+            if time_value == "":
+                f2f.time = None
+            else:
+                try:
+                    f2f.time = datetime.strptime(time_value, "%H:%M").time()
+                except (ValueError, TypeError):
+                    return Response(
+                        {'error': 'Invalid time format. Use HH:MM.'},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+
         f2f.save()
+        f2f.refresh_from_db()
+
         create_asap_meeting_notification(f2f)
         create_candidate_asap_meeting_notification(f2f)
-        return Response({'message': 'Interview updated successfully.'}, status=status.HTTP_200_OK)
+
+        return Response(
+            {'message': 'Interview updated successfully.'},
+            status=status.HTTP_200_OK
+        )
 
     except FaceToFaceInterview.DoesNotExist:
-        return Response({'error': 'Interview record not found.'}, status=status.HTTP_404_NOT_FOUND)
+        return Response(
+            {'error': 'Interview record not found.'},
+            status=status.HTTP_404_NOT_FOUND
+        )
 
 
+@api_view(['DELETE'])
+@permission_classes([IsAuthenticated])
+def delete_f2f(request, pk):
+    try:
+        f2f = FaceToFaceInterview.objects.get(pk=pk)
+        f2f.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+    except FaceToFaceInterview.DoesNotExist:
+        return Response(
+            {'error': 'Interview record not found.'},
+            status=status.HTTP_404_NOT_FOUND
+        )
+        
 # ─── Post-Interview Decisions (face-to-face only) ─────────────────────────
-
+from interviewer.serializers import PostInterviewDecisionSerializer
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def post_interview_decisions_list(request):
@@ -819,3 +887,209 @@ def interviewer_talent_pool(request):
         "results": candidates,
     })
     
+
+from collections import OrderedDict
+from datetime import datetime
+from candidates.models import InternshipApplication
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def candidate_activity_log(request):
+    applications = (
+        InternshipApplication.objects
+        .select_related('internship', 'user')
+        .prefetch_related('assessment_results', 'interviews')
+        .filter(internship__created_by=request.user)
+        .order_by('-applied_at')
+    )
+
+    grouped_candidates = OrderedDict()
+
+    for application in applications:
+        company_name = (
+            application.company_name or
+            (application.internship.company_name if application.internship else "")
+        )
+        role = (
+            application.internship_role or
+            (application.internship.internship_role if application.internship else "")
+        )
+
+        timeline = []
+        applied_ts = application.applied_at.isoformat() if application.applied_at else None
+
+        if application.applied_at:
+            timeline.append({
+                "id": f"applied-{application.id}",
+                "eventType": "applied",
+                "title": "Application Submitted",
+                "description": f"Candidate applied for {role}",
+                "timestamp": applied_ts,
+                "status": "completed",
+            })
+
+        if application.status == "accepted":
+            timeline.append({
+                "id": f"accepted-{application.id}",
+                "eventType": "application_accepted",
+                "title": "Application Accepted",
+                "description": "Application accepted for next round",
+                "timestamp": applied_ts,
+                "status": "completed",
+            })
+
+        assessment = application.assessment_results.order_by('completed_date').last()
+
+        if application.test_completed:
+            quiz_passed = bool(application.test_passed)
+            score_text = (
+                f" – Score: {round(application.test_score, 2)}%"
+                if application.test_score is not None else ""
+            )
+
+            timeline.append({
+                "id": f"quiz-completed-{application.id}",
+                "eventType": "quiz_completed",
+                "title": "Quiz Passed" if quiz_passed else "Quiz Failed",
+                "description": (
+                    f"Candidate passed the online assessment{score_text}"
+                    if quiz_passed
+                    else f"Candidate failed the online assessment{score_text}"
+                ),
+                "timestamp": assessment.completed_date.isoformat() if assessment and assessment.completed_date else applied_ts,
+                "status": "completed" if quiz_passed else "failed",
+            })
+
+        if application.test_passed:
+            timeline.append({
+                "id": f"shortlisted-{application.id}",
+                "eventType": "shortlisted",
+                "title": "Shortlisted for Interview",
+                "description": "Candidate shortlisted for interview",
+                "timestamp": assessment.completed_date.isoformat() if assessment and assessment.completed_date else applied_ts,
+                "status": "completed",
+            })
+
+        interview = application.interviews.order_by('date', 'time').first()
+
+        interview_ts = None
+        if interview and interview.date:
+            if interview.time:
+                interview_ts = datetime.combine(interview.date, interview.time).isoformat()
+            else:
+                interview_ts = datetime.combine(interview.date, datetime.min.time()).isoformat()
+
+        if interview:
+            timeline.append({
+                "id": f"interview-scheduled-{application.id}",
+                "eventType": "interview_scheduled",
+                "title": "Interview Scheduled",
+                "description": f"Face-to-face interview scheduled for {role}",
+                "timestamp": interview_ts,
+                "status": "completed",
+            })
+
+            if interview.attended is True:
+                timeline.append({
+                    "id": f"interview-completed-{application.id}",
+                    "eventType": "interview_completed",
+                    "title": "Face-to-Face Interview",
+                    "description": "Candidate attended the interview",
+                    "timestamp": interview_ts,
+                    "status": "completed",
+                })
+            elif interview.attended is False:
+                timeline.append({
+                    "id": f"interview-completed-{application.id}",
+                    "eventType": "interview_completed",
+                    "title": "Face-to-Face Interview",
+                    "description": "Candidate was absent for the interview",
+                    "timestamp": interview_ts,
+                    "status": "failed",
+                })
+
+            if interview.selected is True:
+                timeline.append({
+                    "id": f"selected-{application.id}",
+                    "eventType": "offer_extended",
+                    "title": "Selected for Internship",
+                    "description": "Candidate selected for internship",
+                    "timestamp": interview_ts,
+                    "status": "completed",
+                })
+            elif interview.selected is False:
+                timeline.append({
+                    "id": f"rejected-{application.id}",
+                    "eventType": "rejected",
+                    "title": "Application Rejected",
+                    "description": "Candidate was not selected after interview",
+                    "timestamp": interview_ts,
+                    "status": "failed",
+                })
+
+        if application.status == "rejected" and not any(
+            item["eventType"] == "rejected" for item in timeline
+        ):
+            timeline.append({
+                "id": f"app-rejected-{application.id}",
+                "eventType": "rejected",
+                "title": "Application Rejected",
+                "description": "Application rejected",
+                "timestamp": applied_ts,
+                "status": "failed",
+            })
+
+        timeline.sort(key=lambda x: x["timestamp"] or "")
+
+        current_status = "Applied"
+        final_outcome = None
+
+        if application.status == "rejected":
+            current_status = "Rejected"
+            final_outcome = "rejected"
+        elif application.test_completed and not application.test_passed:
+            current_status = "Quiz Failed"
+            final_outcome = "rejected"
+        elif interview and interview.selected is True:
+            current_status = "Selected"
+            final_outcome = "accepted"
+        elif interview and interview.selected is False:
+            current_status = "Not Selected"
+            final_outcome = "rejected"
+        elif interview and interview.attended is True:
+            current_status = "Interview Attended"
+        elif interview:
+            current_status = "Interview Scheduled"
+        elif application.test_passed:
+            current_status = "Shortlisted"
+        elif application.test_completed:
+            current_status = "Quiz Completed"
+        elif application.status == "accepted":
+            current_status = "Application Accepted"
+
+        candidate_key = (
+            application.candidate_email
+            or f"user-{application.user_id}"
+            or str(application.id)
+        )
+
+        if candidate_key not in grouped_candidates:
+            grouped_candidates[candidate_key] = {
+                "candidate_id": str(application.user_id) if application.user_id else str(application.id),
+                "candidate_name": application.candidate_name or "Candidate",
+                "candidate_email": application.candidate_email or "",
+                "candidate_phone": application.candidate_phone or "",
+                "applications": []
+            }
+
+        grouped_candidates[candidate_key]["applications"].append({
+            "id": str(application.id),
+            "company": company_name,
+            "role": role,
+            "appliedAt": applied_ts,
+            "currentStatus": current_status,
+            "finalOutcome": final_outcome,
+            "timeline": timeline,
+        })
+
+    return Response(list(grouped_candidates.values()), status=status.HTTP_200_OK)

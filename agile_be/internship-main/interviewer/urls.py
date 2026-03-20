@@ -21,6 +21,7 @@ urlpatterns = [
    path('analytics/download-pdf/', views.download_analytics_pdf, name='download-analytics-pdf'),
    path('analytics-summary/', views.interviewer_analytics_summary, name='interviewer-analytics-summary'),
    path('talent-pool/', views.interviewer_talent_pool, name='interviewer-talent-pool'),
+   path('candidate-activity-log/', views.candidate_activity_log, name='candidate-activity-log'),
 
 ]
 

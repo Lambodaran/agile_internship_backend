@@ -265,7 +265,7 @@ def candidate_interview_calendar(request):
         'scheduled_interviews': interview_data,
     }, status=status.HTTP_200_OK)
     
-
+    
 from datetime import datetime
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
@@ -318,35 +318,49 @@ def application_history(request):
         quiz_timestamp = None
         quiz_score = None
 
-        # 3. Quiz Completed
+        # 3. Quiz Completed / Quiz Failed
         if assessment:
             quiz_timestamp = assessment.completed_date.isoformat() if assessment.completed_date else applied_ts
             quiz_score = round(assessment.score, 2) if assessment.score is not None else None
-
-            title = f"Quiz Completed ({quiz_score}%)" if quiz_score is not None else "Quiz Completed"
+            passed = bool(assessment.passed)
 
             timeline.append({
                 "id": f"quiz-{app.id}",
                 "eventType": "quiz_completed",
-                "title": title,
-                "description": "Your assessment was submitted successfully.",
+                "title": (
+                    f"Quiz Completed ({quiz_score}%)"
+                    if passed
+                    else f"Quiz Failed ({quiz_score}%)"
+                ),
+                "description": (
+                    "You successfully completed the assessment."
+                    if passed
+                    else "You completed the assessment but did not reach the required passing score."
+                ),
                 "timestamp": quiz_timestamp,
-                "status": "completed",
+                "status": "completed" if passed else "failed",
             })
 
         elif getattr(app, 'test_completed', False):
             quiz_timestamp = applied_ts
             quiz_score = round(app.test_score, 2) if app.test_score is not None else None
-
-            title = f"Quiz Completed ({quiz_score}%)" if quiz_score is not None else "Quiz Completed"
+            passed = bool(app.test_passed)
 
             timeline.append({
                 "id": f"quiz-{app.id}",
                 "eventType": "quiz_completed",
-                "title": title,
-                "description": "Your assessment was submitted successfully.",
+                "title": (
+                    f"Quiz Completed ({quiz_score}%)"
+                    if passed
+                    else f"Quiz Failed ({quiz_score}%)"
+                ),
+                "description": (
+                    "You successfully completed the assessment."
+                    if passed
+                    else "You completed the assessment but did not reach the required passing score."
+                ),
                 "timestamp": quiz_timestamp,
-                "status": "completed",
+                "status": "completed" if passed else "failed",
             })
 
         # 4. Shortlisted for Interview
@@ -443,6 +457,9 @@ def application_history(request):
             current_status = "Interview Completed"
         elif interview:
             current_status = "Interview Scheduled"
+        elif getattr(app, 'test_completed', False) and not getattr(app, 'test_passed', False):
+            current_status = "Quiz Failed"
+            final_outcome = "rejected"
         elif getattr(app, 'test_passed', False):
             current_status = "Shortlisted for Interview"
         elif getattr(app, 'test_completed', False):
@@ -462,6 +479,7 @@ def application_history(request):
         })
 
     return Response(history_data, status=200)
+
 
 from .models import SavedInternship
 from .serializers import SavedInternshipSerializer
