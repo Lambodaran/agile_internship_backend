@@ -65,14 +65,17 @@ def interviewer_notifications(request):
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
 def candidate_notifications(request):
-    applications = InternshipApplication.objects.filter(user=request.user).select_related("internship")
+    applications = InternshipApplication.objects.filter(
+        user=request.user
+    ).select_related("internship")
     interviews = FaceToFaceInterview.objects.filter(application__in=applications)
 
     for interview in interviews:
         create_candidate_asap_meeting_notification(interview)
 
     for application in applications:
-        create_candidate_asap_test_schedule_notification(application)
+        if application.status == "accepted":
+            create_candidate_asap_test_schedule_notification(application)
 
     notifications = Notification.objects.filter(user=request.user).order_by("-created_at")
     data = [
@@ -97,7 +100,6 @@ def candidate_notifications(request):
         },
         status=status.HTTP_200_OK,
     )
-
 
 @api_view(["PATCH"])
 @permission_classes([IsAuthenticated])

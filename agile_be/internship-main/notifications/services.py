@@ -151,11 +151,14 @@ def create_candidate_asap_meeting_notification(interview):
     )
     return obj
 
-
 def create_candidate_asap_test_schedule_notification(application):
     candidate_user = getattr(application, "user", None)
     internship = getattr(application, "internship", None)
     if not candidate_user or not internship:
+        return None
+
+    # IMPORTANT: only accepted applications should get test schedule notification
+    if getattr(application, "status", "").lower() != "accepted":
         return None
 
     quiz_date = getattr(internship, "quiz_open_date", None)
